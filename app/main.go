@@ -37,14 +37,20 @@ func run() error {
 		BaseURL:           cfg.UpstreamBase,
 		Proxy:             cfg.Proxy,
 		SessionTimeout:    cfg.SessionTimeout,
+		SessionPerRequest: cfg.SessionPerRequest,
 		ClearanceRefresh:  cfg.ClearanceRefresh,
 		ClearanceCooldown: cfg.ClearanceCooldown,
 		ClearancePool:     cfg.ClearancePool,
 		Logf:              logf,
 	})
 
+	// 每请求新 session 时池子不再预热（Min=0），避免白白多取 token。
+	poolMin := cfg.PoolMin
+	if cfg.SessionPerRequest {
+		poolMin = 0
+	}
 	p := pool.New(pool.Config{
-		Min:      cfg.PoolMin,
+		Min:      poolMin,
 		Max:      cfg.PoolMax,
 		TTL:      cfg.PoolTTL,
 		Interval: 15 * time.Second,
@@ -101,8 +107,8 @@ func run() error {
 	defer stop()
 
 	go func() {
-		logf("inceptionlabs2api listening on %s (upstream=%s proxy=%q models=%v)",
-			cfg.Addr, cfg.UpstreamBase, config.RedactProxy(cfg.Proxy), cfg.Models)
+		logf("inceptionlabs2api listening on %s (upstream=%s proxy=%q models=%v session_per_request=%v)",
+			cfg.Addr, cfg.UpstreamBase, config.RedactProxy(cfg.Proxy), cfg.Models, cfg.SessionPerRequest)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("http server: %v", err)
 		}

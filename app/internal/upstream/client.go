@@ -93,6 +93,8 @@ type Client struct {
 	base    string
 	pool    *pool.Pool
 	timeout time.Duration
+	// sessionPerRequest 为真时 authed 每次请求都新取 session，跳过池复用。
+	sessionPerRequest bool
 	logf    func(format string, args ...any)
 	clear   *clear.Clearance
 	hc      *http.Client
@@ -105,6 +107,11 @@ type Config struct {
 	Pool    *pool.Pool
 	// SessionTimeout bounds one /api/session fetch.
 	SessionTimeout time.Duration
+	// SessionPerRequest fetches a brand-new anonymous session token for every
+	// upstream call instead of drawing from the pool. The upstream keeps the
+	// conversation history on that token, so reuse eventually fails with
+	// "This conversation is too long".
+	SessionPerRequest bool
 	// ClearanceRefresh is the proactive cookie refresh age. Zero means 45m.
 	ClearanceRefresh time.Duration
 	// ClearanceCooldown is the minimum retry interval after a failed
@@ -141,11 +148,12 @@ func NewClient(cfg Config) (*Client, pool.Fetcher) {
 	// diffusion generations. The sliding idle watchdog lives in Reader.
 	hc := &http.Client{Transport: tr, CheckRedirect: checkRedirect}
 	c := &Client{
-		base:    strings.TrimRight(cfg.BaseURL, "/"),
-		pool:    cfg.Pool,
-		timeout: cfg.SessionTimeout,
-		logf:    logf,
-		hc:      hc,
+		base:              strings.TrimRight(cfg.BaseURL, "/"),
+		pool:              cfg.Pool,
+		timeout:           cfg.SessionTimeout,
+		sessionPerRequest: cfg.SessionPerRequest,
+		logf:              logf,
+		hc:                hc,
 	}
 	c.clear = clear.New(clear.Config{
 		BaseURL:  c.base,
@@ -412,6 +420,15 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest, idle time.Duration,
 	}, nil
 }
 
+// sessionToken returns the token to use for one request: a freshly fetched
+// session when SessionPerRequest is on, otherwise a pooled one.
+func (c *Client) sessionToken(ctx context.Context) (string, error) {
+	if c.sessionPerRequest {
+		return c.FetchSession(ctx)
+	}
+	return c.pool.Get(ctx)
+}
+
 // authed issues one request with a pooled token, retrying with a fresh token
 // on 401/403 at most maxAuthRetries times. It returns a 200 response whose
 // body the caller owns. A 401/403 discards that token; other non-200 statuses
@@ -426,8 +443,9 @@ func (c *Client) authed(ctx context.Context, method, path, label string, body []
 		return nil, fmt.Errorf("%w: no pool bound", ErrUnavailable)
 	}
 	var lastErr error
+	rateRetries := 0
 	for attempt := 0; attempt <= maxAuthRetries; attempt++ {
-		token, err := c.pool.Get(ctx)
+		token, err := c.sessionToken(ctx)
 		if err != nil {
 			// A pool that could not fill because the checkpoint refused us is
 			// a clearance failure, not a generic "no token": the operator can
@@ -449,10 +467,29 @@ func (c *Client) authed(ctx context.Context, method, path, label string, body []
 		switch {
 		case resp.StatusCode == http.StatusOK:
 			return resp, nil
+		case resp.StatusCode == http.StatusTooManyRequests && rateRetries < 2:
+			// [local patch] 每请求新 session 会抬高上游调用速率，突发时上游回
+			// 429 "Too Many Requests"（无 Vercel challenge 头）。退避后重试，
+			// 不消耗 401/403 的重试预算。
+			bodyText, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+			resp.Body.Close()
+			rateRetries++
+			delay := time.Duration(rateRetries) * 1500 * time.Millisecond
+			c.logf("upstream: %s 429 too many requests, backing off %s then retrying", label, delay)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			lastErr = &StatusError{Status: resp.StatusCode, Body: string(bodyText)}
+			attempt-- // 不占用鉴权重试次数
+			continue
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBody))
 			resp.Body.Close()
-			c.pool.Discard(token)
+			if !c.sessionPerRequest {
+				c.pool.Discard(token)
+			}
 			c.logf("upstream: session token rejected (status %d), retrying", resp.StatusCode)
 			lastErr = fmt.Errorf("%w: status %d", ErrAuthRejected, resp.StatusCode)
 			continue

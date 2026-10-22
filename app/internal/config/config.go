@@ -23,6 +23,9 @@ type Config struct {
 	PoolMin      int
 	PoolMax      int
 	PoolTTL      time.Duration
+	// SessionPerRequest 每个上游请求都新取一个匿名 session token（不复用）。
+	// 上游按 session 累积对话历史，复用过久会报 "This conversation is too long"。
+	SessionPerRequest bool
 	IdleTimeout  time.Duration
 	// PreambleStyle selects the tool preamble skeleton ("hermes" or
 	// "inception"); wired to tools.PreStyle at boot.
@@ -179,6 +182,16 @@ func FromEnv(getenv func(string) string) (Config, error) {
 			c.SearchConfigCheck = false
 		default:
 			return Config{}, fmt.Errorf("config: IL2API_SEARCH_CONFIG_CHECK must be on or off, got %q", v)
+		}
+	}
+	if v := strings.TrimSpace(strings.ToLower(getenv("IL2API_SESSION_PER_REQUEST"))); v != "" {
+		switch v {
+		case "on", "1", "true", "yes":
+			c.SessionPerRequest = true
+		case "off", "0", "false", "no":
+			c.SessionPerRequest = false
+		default:
+			return Config{}, fmt.Errorf("config: IL2API_SESSION_PER_REQUEST must be on or off, got %q", v)
 		}
 	}
 	if v := strings.TrimSpace(strings.ToLower(getenv("IL2API_NATIVE_WEB_SEARCH"))); v != "" {
