@@ -58,6 +58,10 @@ func normalizeRole(role string) string {
 	}
 }
 
+// ContentTexts exposes contentTexts to callers that render one message at a
+// time (history compaction folds old turns into a single transcript bubble).
+func ContentTexts(content any) []string { return contentTexts(content) }
+
 // contentTexts extracts the renderable text of a message content value.
 // A non-text part is rendered as a short placeholder naming its type, so an
 // attachment stays visible to the model. Parts that carry no usable text

@@ -26,10 +26,13 @@ type Config struct {
 	// MaxMessages 单次请求允许的最多消息条数。上游硬上限 100 条（实测
 	// 100 通过、101 报 "This conversation is too long"），默认留 4 条余量。
 	MaxMessages int
+	// CompactKeepRecent 超限时保留最近多少条消息的原结构，其余旧消息折叠成
+	// 一条转录消息（保文本、省条数）。0 = 用 MaxMessages-8。
+	CompactKeepRecent int
 	// SessionPerRequest 每个上游请求都新取一个匿名 session token（不复用）。
 	// 上游按 session 累积对话历史，复用过久会报 "This conversation is too long"。
 	SessionPerRequest bool
-	IdleTimeout  time.Duration
+	IdleTimeout       time.Duration
 	// PreambleStyle selects the tool preamble skeleton ("hermes" or
 	// "inception"); wired to tools.PreStyle at boot.
 	PreambleStyle string
@@ -65,17 +68,18 @@ type Config struct {
 // Defaults returns the configuration used when no environment variable is set.
 func Defaults() Config {
 	return Config{
-		Addr:            ":3000",
-		UpstreamBase:    "https://chat.inceptionlabs.ai",
-		Model:           "mercury-3",
-		PoolMin:         2,
-		PoolMax:         8,
-		PoolTTL:         30 * time.Minute,
-		MaxMessages:     96,
-		IdleTimeout:     60 * time.Second,
-		ContextChars:    0,
-		SessionTimeout:  15 * time.Second,
-		NativeWebSearch: false,
+		Addr:              ":3000",
+		UpstreamBase:      "https://chat.inceptionlabs.ai",
+		Model:             "mercury-3",
+		PoolMin:           2,
+		PoolMax:           8,
+		PoolTTL:           30 * time.Minute,
+		MaxMessages:       96,
+		CompactKeepRecent: 0,
+		IdleTimeout:       60 * time.Second,
+		ContextChars:      0,
+		SessionTimeout:    15 * time.Second,
+		NativeWebSearch:   false,
 
 		SearchTimeout:      60 * time.Second,
 		SearchConfigCheck:  true,
@@ -149,6 +153,9 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	if c.MaxMessages, err = envInt(getenv, "IL2API_MAX_MESSAGES", c.MaxMessages); err != nil {
+		return Config{}, err
+	}
+	if c.CompactKeepRecent, err = envInt(getenv, "IL2API_COMPACT_KEEP_RECENT", c.CompactKeepRecent); err != nil {
 		return Config{}, err
 	}
 	if c.IdleTimeout, err = envDuration(getenv, "IL2API_IDLE_TIMEOUT", c.IdleTimeout); err != nil {

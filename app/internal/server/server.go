@@ -58,6 +58,9 @@ type Config struct {
 	// MaxMessages caps one chat request's message count. Zero means 96.
 	// The upstream rejects >100 messages with "This conversation is too long".
 	MaxMessages int
+	// CompactKeepRecent keeps this many newest messages structurally intact when
+	// history is folded to fit MaxMessages. Zero means MaxMessages-8.
+	CompactKeepRecent int
 	// SearchTimeout bounds /v1/web_search's sliding idle watchdog. Zero means
 	// IdleTimeout.
 	SearchTimeout time.Duration
@@ -278,7 +281,12 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 上游硬上限 100 条消息（101 条即 "This conversation is too long"），
-	// 与 token 大小无关；这里裁掉最旧的历史，保留 system + 最近若干轮。
+	// 与 token 大小无关。超限时先把最旧的部分折叠成一条转录消息（文本不丢），
+	// 仍然超限才裁掉最旧的历史。
+	if compacted, folded := compactMessages(req.Messages, s.cfg.CompactKeepRecent, s.cfg.MaxMessages); folded > 0 {
+		s.logf("chat: compacted %d oldest messages into one transcript bubble (%d -> %d)", folded, len(req.Messages), len(compacted))
+		req.Messages = compacted
+	}
 	if trimmed, dropped := trimMessages(req.Messages, s.cfg.MaxMessages); dropped > 0 {
 		s.logf("chat: trimmed %d oldest messages (%d -> %d) for the upstream 100-message cap", dropped, len(req.Messages), len(trimmed))
 		req.Messages = trimmed
