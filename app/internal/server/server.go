@@ -55,6 +55,9 @@ type Config struct {
 	Model       string
 	Models      []string
 	IdleTimeout time.Duration
+	// MaxMessages caps one chat request's message count. Zero means 96.
+	// The upstream rejects >100 messages with "This conversation is too long".
+	MaxMessages int
 	// SearchTimeout bounds /v1/web_search's sliding idle watchdog. Zero means
 	// IdleTimeout.
 	SearchTimeout time.Duration
@@ -273,6 +276,12 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if re != nil {
 		s.fail(w, re)
 		return
+	}
+	// 上游硬上限 100 条消息（101 条即 "This conversation is too long"），
+	// 与 token 大小无关；这里裁掉最旧的历史，保留 system + 最近若干轮。
+	if trimmed, dropped := trimMessages(req.Messages, s.cfg.MaxMessages); dropped > 0 {
+		s.logf("chat: trimmed %d oldest messages (%d -> %d) for the upstream 100-message cap", dropped, len(req.Messages), len(trimmed))
+		req.Messages = trimmed
 	}
 	if !s.knownModel(req.Model) {
 		s.fail(w, openai.New(http.StatusNotFound, "invalid_request_error", openai.CodeModelNotFound, "model",

@@ -496,7 +496,11 @@ func (c *Client) authed(ctx context.Context, method, path, label string, body []
 		default:
 			bodyText, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 			resp.Body.Close()
-			c.logf("upstream: %s status %d: %s", label, resp.StatusCode, truncate(string(bodyText), 500))
+			prefix := token
+			if len(prefix) > 6 {
+				prefix = prefix[:6]
+			}
+			c.logf("upstream: %s status %d (token %s…, body %d B): %s", label, resp.StatusCode, prefix, len(body), truncate(string(bodyText), 500))
 			return nil, &StatusError{Status: resp.StatusCode, Body: string(bodyText)}
 		}
 	}

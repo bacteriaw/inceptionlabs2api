@@ -23,6 +23,9 @@ type Config struct {
 	PoolMin      int
 	PoolMax      int
 	PoolTTL      time.Duration
+	// MaxMessages 单次请求允许的最多消息条数。上游硬上限 100 条（实测
+	// 100 通过、101 报 "This conversation is too long"），默认留 4 条余量。
+	MaxMessages int
 	// SessionPerRequest 每个上游请求都新取一个匿名 session token（不复用）。
 	// 上游按 session 累积对话历史，复用过久会报 "This conversation is too long"。
 	SessionPerRequest bool
@@ -68,6 +71,7 @@ func Defaults() Config {
 		PoolMin:         2,
 		PoolMax:         8,
 		PoolTTL:         30 * time.Minute,
+		MaxMessages:     96,
 		IdleTimeout:     60 * time.Second,
 		ContextChars:    0,
 		SessionTimeout:  15 * time.Second,
@@ -142,6 +146,9 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	if c.PoolTTL, err = envDuration(getenv, "IL2API_POOL_TTL", c.PoolTTL); err != nil {
+		return Config{}, err
+	}
+	if c.MaxMessages, err = envInt(getenv, "IL2API_MAX_MESSAGES", c.MaxMessages); err != nil {
 		return Config{}, err
 	}
 	if c.IdleTimeout, err = envDuration(getenv, "IL2API_IDLE_TIMEOUT", c.IdleTimeout); err != nil {
@@ -220,6 +227,9 @@ func (c Config) validate() error {
 	}
 	if c.PoolMin > c.PoolMax {
 		return fmt.Errorf("config: IL2API_POOL_MIN (%d) must not exceed IL2API_POOL_MAX (%d)", c.PoolMin, c.PoolMax)
+	}
+	if c.MaxMessages < 4 {
+		return fmt.Errorf("config: IL2API_MAX_MESSAGES must be >= 4, got %d", c.MaxMessages)
 	}
 	if c.PoolTTL <= 0 {
 		return fmt.Errorf("config: IL2API_POOL_TTL must be positive, got %s", c.PoolTTL)
