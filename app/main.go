@@ -78,6 +78,7 @@ func run() error {
 		Models:             cfg.Models,
 		IdleTimeout:        cfg.IdleTimeout,
 		MaxMessages:        cfg.MaxMessages,
+		EmptyRetries:       cfg.EmptyRetries,
 		CompactKeepRecent:  cfg.CompactKeepRecent,
 		SearchTimeout:      cfg.SearchTimeout,
 		SearchProbeTimeout: cfg.SearchProbeTimeout,

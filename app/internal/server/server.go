@@ -58,6 +58,10 @@ type Config struct {
 	// MaxMessages caps one chat request's message count. Zero means 96.
 	// The upstream rejects >100 messages with "This conversation is too long".
 	MaxMessages int
+	// EmptyRetries is how many times an empty upstream answer (no text at all)
+	// is retried before reporting 502 upstream_empty_response. Zero keeps the
+	// single attempt behaviour; negative is treated as zero.
+	EmptyRetries int
 	// CompactKeepRecent keeps this many newest messages structurally intact when
 	// history is folded to fit MaxMessages. Zero means MaxMessages-8.
 	CompactKeepRecent int

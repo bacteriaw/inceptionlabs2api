@@ -188,6 +188,33 @@ func (s *Server) recoverRound(ctx context.Context, ureq *upstream.ChatRequest, m
 	return retry
 }
 
+// readRoundWithRetries applies the empty-answer policy on top of readRound:
+// an empty round (no text, no calls) is retried EmptyRetries times because the
+// upstream occasionally answers with nothing at all; a broken call envelope
+// keeps its single recovery retry. The caller decides what to do when the
+// result is still empty (measured 2026-10-22: mercury-3, 80k+ token prompts,
+// completion_tokens=0 — the client saw a silent empty turn).
+func (s *Server) readRoundWithRetries(ctx context.Context, ureq *upstream.ChatRequest, manifest *tools.Manifest) (*round, error) {
+	res, err := s.readRound(ctx, ureq, manifest)
+	if err != nil {
+		return nil, err
+	}
+	emptyRetries := 0
+	for {
+		kind, doRetry := s.retryKind(res, nil)
+		if !doRetry {
+			return res, nil
+		}
+		if res.emptyToolAnswer() {
+			if emptyRetries >= s.cfg.EmptyRetries {
+				return res, nil
+			}
+			emptyRetries++
+		}
+		res = s.recoverRound(ctx, ureq, manifest, res, kind)
+	}
+}
+
 // retryLogReason names the retry for the log line.
 func retryLogReason(kind tools.RecoveryKind, res *round) string {
 	if res.emptyToolAnswer() {
@@ -263,13 +290,14 @@ func (s *Server) streamTools(w http.ResponseWriter, r *http.Request, ureq *upstr
 		return
 	}
 	rtag := wireTag()
-	res, err := s.readRound(r.Context(), ureq, manifest)
+	res, err := s.readRoundWithRetries(r.Context(), ureq, manifest)
 	if err != nil {
 		s.fail(w, s.upstreamError(err))
 		return
 	}
-	if kind, retry := s.retryKind(res, nil); retry {
-		res = s.recoverRound(r.Context(), ureq, manifest, res, kind)
+	if res.emptyToolAnswer() {
+		s.fail(w, emptyUpstreamError())
+		return
 	}
 	wireDumpRound(rtag, res.content, res.calls)
 
@@ -311,6 +339,11 @@ func (s *Server) streamNative(w http.ResponseWriter, r *http.Request, ureq *upst
 			s.upErrors.Add(1)
 			s.logf("tools: native recovery retry failed: %v (passing original round through)", err2)
 		}
+	}
+
+	if res.content == "" && len(calls) == 0 {
+		s.fail(w, emptyUpstreamError())
+		return
 	}
 
 	setStreamHeaders(w)
@@ -414,7 +447,7 @@ func (s *Server) completeTools(w http.ResponseWriter, r *http.Request, ureq *ups
 	if plan.native {
 		res, calls, err = s.resolveNative(r.Context(), ureq, plan)
 	} else {
-		res, err = s.readRound(r.Context(), ureq, manifest)
+		res, err = s.readRoundWithRetries(r.Context(), ureq, manifest)
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
@@ -436,11 +469,16 @@ func (s *Server) completeTools(w http.ResponseWriter, r *http.Request, ureq *ups
 				s.logf("tools: native recovery retry failed: %v (passing original round through)", err2)
 			}
 		}
+		if res.content == "" && len(calls) == 0 {
+			s.fail(w, emptyUpstreamError())
+			return
+		}
 		s.writeToolCompletion(w, model, res.content, res.reasoning, calls, res.cites.Citations())
 		return
 	}
-	if kind, retry := s.retryKind(res, nil); retry {
-		res = s.recoverRound(r.Context(), ureq, manifest, res, kind)
+	if res.emptyToolAnswer() {
+		s.fail(w, emptyUpstreamError())
+		return
 	}
 	s.writeToolCompletion(w, model, res.content, res.reasoning, res.calls, res.cites.Citations())
 }

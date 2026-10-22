@@ -26,6 +26,8 @@ type Config struct {
 	// MaxMessages 单次请求允许的最多消息条数。上游硬上限 100 条（实测
 	// 100 通过、101 报 "This conversation is too long"），默认留 4 条余量。
 	MaxMessages int
+	// EmptyRetries 上游返回空补全（无任何文本）时的重试次数，默认 2。
+	EmptyRetries int
 	// CompactKeepRecent 超限时保留最近多少条消息的原结构，其余旧消息折叠成
 	// 一条转录消息（保文本、省条数）。0 = 用 MaxMessages-8。
 	CompactKeepRecent int
@@ -75,6 +77,7 @@ func Defaults() Config {
 		PoolMax:           8,
 		PoolTTL:           30 * time.Minute,
 		MaxMessages:       96,
+		EmptyRetries:      2,
 		CompactKeepRecent: 0,
 		IdleTimeout:       60 * time.Second,
 		ContextChars:      0,
@@ -153,6 +156,9 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	if c.MaxMessages, err = envInt(getenv, "IL2API_MAX_MESSAGES", c.MaxMessages); err != nil {
+		return Config{}, err
+	}
+	if c.EmptyRetries, err = envInt(getenv, "IL2API_EMPTY_RETRIES", c.EmptyRetries); err != nil {
 		return Config{}, err
 	}
 	if c.CompactKeepRecent, err = envInt(getenv, "IL2API_COMPACT_KEEP_RECENT", c.CompactKeepRecent); err != nil {
