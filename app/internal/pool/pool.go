@@ -76,6 +76,10 @@ type Pool struct {
 	// requests cannot start a handshake storm.
 	fetchMu sync.Mutex
 
+	// refilling guards Discard's async refill: true while one refill
+	// goroutine is live. Storms of discards collapse into one refill.
+	refilling bool
+
 	stop     chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
@@ -166,7 +170,10 @@ func (p *Pool) Get(ctx context.Context) (string, error) {
 }
 
 // Discard removes exactly tok and triggers one asynchronous refill. It is
-// called only when the upstream answered 401/403 for that token.
+// called only when the upstream answered 401/403 for that token. Refills are
+// single-flight: a burst of discards (429/401 storm) must not stack one
+// refill goroutine per token — grow() is idempotent, so one live refill
+// covers them all.
 func (p *Pool) Discard(tok string) {
 	p.mu.Lock()
 	removed := false
@@ -177,8 +184,17 @@ func (p *Pool) Discard(tok string) {
 			break
 		}
 	}
+	storm := removed && p.refilling
+	if removed && !p.refilling {
+		p.refilling = true
+	}
 	p.mu.Unlock()
 	if !removed {
+		return
+	}
+	if storm {
+		// A refill is already running; grow() tops up to Min on its next
+		// pass, so stacking another goroutine only burns handshakes.
 		return
 	}
 	go func() {
@@ -187,6 +203,9 @@ func (p *Pool) Discard(tok string) {
 		if err := p.grow(ctx); err != nil {
 			p.reportFetchError(err)
 		}
+		p.mu.Lock()
+		p.refilling = false
+		p.mu.Unlock()
 	}()
 }
 

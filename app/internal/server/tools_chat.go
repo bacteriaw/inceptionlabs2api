@@ -159,7 +159,9 @@ func (s *Server) readRound(ctx context.Context, ureq *upstream.ChatRequest, mani
 	rtag := wireTag()
 	readErr := stream.Reader.Read(ctx, func(ev upstream.Event) error {
 		out.cites.Observe(ev, s.logf)
-		defer wireDumpEvent(rtag, ev, 0, 0)
+		if wireDebugOn() {
+			wireDumpEvent(rtag, ev, 0, 0)
+		}
 		switch ev.Type {
 		case upstream.EventReasoningDelta:
 			out.reasoning += ev.Reasoning()
