@@ -95,7 +95,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, ureq *upstream.C
 	sawText := false
 	readErr := stream.Reader.Read(r.Context(), func(ev upstream.Event) error {
 		cites.Observe(ev, s.logf)
-		defer wireDumpEvent(rtag, ev, 0, 0)
+		if wireDebugOn() {
+			wireDumpEvent(rtag, ev, 0, 0)
+		}
 		switch ev.Type {
 		case upstream.EventReasoningDelta:
 			if text := ev.Reasoning(); text != "" {

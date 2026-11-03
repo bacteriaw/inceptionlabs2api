@@ -6,7 +6,6 @@ import (
 	"inceptionlabs2api/internal/openai"
 	"inceptionlabs2api/internal/tools"
 	"log"
-	"os"
 	"strings"
 	"sync/atomic"
 
@@ -21,7 +20,10 @@ import (
 var wireDebug atomic.Bool
 var wireSeq atomic.Int64
 
-func init() { wireDebug.Store(os.Getenv("IL2API_WIRE_DEBUG") == "on") }
+// Wire debug is disabled unconditionally: the tap was a live-incident tool,
+// but per-event logging on the streaming hot path costs latency and log
+// volume in production. IL2API_WIRE_DEBUG no longer re-enables it.
+func init() { wireDebug.Store(false) }
 
 // wireLog writes one line to stderr with a request tag so concurrent streams
 // can be told apart.
@@ -116,3 +118,8 @@ func wireDumpRound(tag string, content string, calls []tools.Call) {
 
 // wireTag returns a short per-request tag for correlating log lines.
 func wireTag() string { return fmt.Sprintf("r%d", wireSeq.Add(1)) }
+
+// wireDebugOn reports whether the wire tap is enabled. Callers in hot loops
+// use this to skip defer bookkeeping entirely (per-event defer records pile
+// up until the enclosing function returns — measurable on long streams).
+func wireDebugOn() bool { return wireDebug.Load() }
